@@ -132,18 +132,42 @@ const UserContext = ({ children }) => {
     }
   };
 
-  const assignWorkerToProject = async (projectId, workerId) => {
-    if (!token) return;
+  const assignWorkerToProject = async (projectId, workerData) => {
+    if (!token) {
+      console.warn("No token, cannot assign worker");
+      return null;
+    }
+
     try {
-      await axios.post(`${backendUrl}/api/assign-worker`, { projectId, workerId }, { headers: { token } });
-      await fetchProjects();
-      await fetchWorkers();
-      toast.success("✅ Worker assigned successfully!");
+      const url = `${backendUrl}/api/projects/${projectId}/assign`;
+      const { data } = await axios.put(url, workerData, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+
+      // Handle multiple possible response shapes:
+      const updatedProject = data?.project || data?.updatedProject || data;
+
+      if (updatedProject && updatedProject._id) {
+        setProjects(prev => prev.map(p => (p._id === updatedProject._id ? updatedProject : p)));
+        // Ensure we are in sync with backend truth
+        await fetchProjects();
+        // optional: refresh workers if backend changes worker records
+        await fetchWorkers();
+        return updatedProject;
+      } else {
+        // fallback: re-fetch everything
+        await fetchProjects();
+        await fetchWorkers();
+        return data;
+      }
     } catch (err) {
-      console.error("Error assigning worker:", err);
-      toast.error("❌ Failed to assign worker");
+      console.error("Error assigning worker:", err?.response?.data || err.message);
+      // bubble or handle error in UI if needed
+      return null;
     }
   };
+
+
 
   // -------------------- TASKS & MILESTONES --------------------
   const addTaskToProject = async (projectId, title, description = "") => {
@@ -205,22 +229,31 @@ const UserContext = ({ children }) => {
   };
 
   const updateMilestoneStatus = async (projectId, taskId, milestoneId, completed) => {
-    try {
-      const res = await axios.post(
-        `${backendUrl}/api/update-milestone-status`,
-        { projectId, taskId, milestoneId, completed },
-        { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
-      );
+  try {
+    // Determine timestamp when marking as complete
+    const completedAt = completed ? new Date().toISOString() : null;
 
-      setProjects(prev => prev.map(p => (p._id === projectId ? res.data.updatedProject : p)));
+    const res = await axios.post(
+      `${backendUrl}/api/update-milestone-status`,
+      { projectId, taskId, milestoneId, completed, completedAt },
+      {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      }
+    );
 
-      // Update project progress after milestone toggle
-      await recalcProjectProgress(projectId);
+    // Update local projects state
+    setProjects(prev =>
+      prev.map(p => (p._id === projectId ? res.data.updatedProject : p))
+    );
 
-    } catch (err) {
-      console.error("Error updating milestone:", err);
-    }
-  };
+    // Recalculate project progress
+    await recalcProjectProgress(projectId);
+
+  } catch (err) {
+    console.error("Error updating milestone:", err);
+  }
+};
+
 
   // -------------------- RECALC PROJECT PROGRESS --------------------
   const recalcProjectProgress = async (projectId) => {
@@ -289,24 +322,53 @@ const UserContext = ({ children }) => {
 
   // -------------------- CLOCK --------------------
   const createClockEntry = async ({ worker, project, type }) => {
-    if (!worker || !project || !type) return;
-    const newEntry = { id: Date.now(), worker, project, type, time: new Date().toISOString(), synced: false, ownerToken: token };
-    const updatedEntries = [...clockEntries, newEntry];
-    setClockEntries(updatedEntries);
-    localStorage.setItem("clockEntries", JSON.stringify(updatedEntries));
+  if (!worker || !project || !type || !token) return;
 
-    if (navigator.onLine && token) {
-      try {
-        const { data } = await axios.post(`${backendUrl}/api/clock`, { worker, project, type, time: newEntry.time }, { headers: { token } });
-        const saved = { ...newEntry, synced: true, _id: data.clock?._id || data._id };
-        const final = updatedEntries.map(e => e.id === newEntry.id ? saved : e);
-        setClockEntries(final);
-        localStorage.setItem("clockEntries", JSON.stringify(final));
-      } catch (err) {
-        console.error("Failed to post clock entry:", err.message);
-      }
-    }
+  const newEntry = {
+    id: Date.now(),
+    worker,
+    project,
+    type,
+    time: new Date().toISOString(),
+    synced: false,
+    ownerToken: token,
   };
+
+  // Optimistic UI update
+  setClockEntries(prev => {
+    const updated = [...prev, newEntry];
+    localStorage.setItem("clockEntries", JSON.stringify(updated));
+    return updated;
+  });
+
+  // Attempt to sync with backend
+  try {
+    const { data } = await axios.post(
+      `${backendUrl}/api/clock`,
+      {
+        worker,
+        project,
+        type,
+        time: newEntry.time,
+      },
+      { headers: { token } }
+    );
+
+    // Update state with backend response
+    setClockEntries(prev => {
+      const final = prev.map(e =>
+        e.id === newEntry.id
+          ? { ...e, synced: true, _id: data.clock?._id || data._id }
+          : e
+      );
+      localStorage.setItem("clockEntries", JSON.stringify(final));
+      return final;
+    });
+  } catch (err) {
+    console.error("Failed to post clock entry:", err.response?.data || err.message);
+  }
+};
+
 
   const syncClockEntries = async () => {
     if (!token || !navigator.onLine) return;

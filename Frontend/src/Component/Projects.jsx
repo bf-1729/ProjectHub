@@ -17,7 +17,6 @@ const Projects = () => {
   const [pdfModal, setPdfModal] = useState({ open: false, files: [], index: 0 });
   const [imagesFiles, setImagesFiles] = useState([]);
   const [pdfFiles, setPdfFiles] = useState([]); // for multiple PDFs
-
   const [formData, setFormData] = useState({
     projectName: "",
     projectDescription: "",
@@ -30,6 +29,7 @@ const Projects = () => {
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [selectedWorkers, setSelectedWorkers] = useState({});
+  const [selectedStatus, setSelectedStatus] = useState({}); // <-- per-project status select
   const [progressValue, setProgressValue] = useState(0);
   const [progressImages, setProgressImages] = useState([]);
   const [progressPdfs, setProgressPdfs] = useState([]);
@@ -46,6 +46,9 @@ const Projects = () => {
     assignWorkerToProject,
     backendUrl,
     fetchProjects,
+    fetchWorkers, // used to refresh worker availability after status change
+    changeProjectStatus, // explicit status setter (recommended)
+    updateProjectStatus, // fallback (older endpoint)
   } = useContext(UsersContext);
 
   const baseUrl = backendUrl || "http://localhost:4000";
@@ -66,9 +69,6 @@ const Projects = () => {
     }
   }, []);
 
-  console.log(role, userId);
-
-
   // --- Modal Handlers ---
   const openImageModal = (images = [], index = 0) =>
     setImageModal({ open: true, files: Array.isArray(images) ? images : [], index });
@@ -78,13 +78,11 @@ const Projects = () => {
     setPdfModal({ open: true, files: Array.isArray(pdfs) ? pdfs : [], index });
   const closePdfModal = () => setPdfModal({ open: false, files: [], index: 0 });
 
-  // --- Filter projects based on role ---
   // --- Filter projects based on role and userId ---
   const filteredProjects = (projects || []).filter((project) => {
     if (role === "admin") return true; // Admin sees all projects
 
     if (role === "supervisor") {
-      // Supervisors see projects where they are assigned
       if (Array.isArray(project.supervisors)) {
         return project.supervisors.includes(userId);
       } else {
@@ -95,7 +93,11 @@ const Projects = () => {
     if (role === "worker") {
       if (Array.isArray(project.assignedWorkers)) {
         return project.assignedWorkers.some((w) => {
-          return w._id?.toString() === userId || w.name?.toLowerCase() === userId?.toLowerCase();
+          // project.assignedWorkers items in your schema: { workerId, name }
+          return (
+            w.workerId?.toString() === userId ||
+            w.name?.toLowerCase() === userId?.toLowerCase()
+          );
         });
       }
       return false;
@@ -103,10 +105,6 @@ const Projects = () => {
 
     return false;
   });
-
-
-  console.log(filteredProjects);
-
 
   const activeProjects = filteredProjects.filter(
     (p) => p.projectStatus === "active" || p.projectStatus === "completed"
@@ -120,12 +118,10 @@ const Projects = () => {
     const files = Array.from(e.target.files || []);
     setImagesFiles(files);
   };
-
   const handlePDFUpload = (e) => {
     const files = Array.from(e.target.files || []);
     setPdfFiles(files);
   };
-
 
   // --- Create Project ---
   const handleCreateProject = async (e) => {
@@ -143,19 +139,10 @@ const Projects = () => {
       data.append("projectbudget", formData.projectbudget);
       data.append("supervisors", JSON.stringify(formData.supervisors));
 
-      // Images (multiple)
-      imagesFiles.forEach(file => {
-        data.append("images", file); // matches backend "images"
-      });
-
-      // PDFs (multiple)
+      imagesFiles.forEach(file => data.append("images", file));
       if (pdfFiles && pdfFiles.length > 0) {
-        pdfFiles.forEach(file => {
-          data.append("pdfs", file); // matches backend "pdfs"
-        });
+        pdfFiles.forEach(file => data.append("pdfs", file));
       }
-
-
 
       await newProject(data);
       toast.success("✅ Project created successfully!");
@@ -178,30 +165,22 @@ const Projects = () => {
     }
   };
 
-  console.log(formData);
-
   const calculateProjectProgress = (project) => {
     if (!project?.tasks || project.tasks.length === 0) return 0;
-
     const totalTasks = project.tasks.length;
     let progress = 0;
-
     project.tasks.forEach((task) => {
       const milestones = task.milestones || [];
-      const taskWeight = 100 / totalTasks; // each task contributes equally
+      const taskWeight = 100 / totalTasks;
       if (milestones.length === 0) {
-        progress += 0; // no milestones, task contributes 0
+        progress += 0;
       } else {
         const completed = milestones.filter((ms) => ms.completed).length;
         progress += (completed / milestones.length) * taskWeight;
       }
     });
-
     return Math.round(progress);
   };
-
-
-
 
   // --- Progress Modal Handlers ---
   const openProgressModal = (project) => {
@@ -210,7 +189,6 @@ const Projects = () => {
     setProgressImages([]);
     setProgressPdfs([]);
   };
-
   const handleProgressImages = (e) => setProgressImages(Array.from(e.target.files || []));
   const handleProgressPdfs = (e) => setProgressPdfs(Array.from(e.target.files || []));
   const handleProgressUpdate = async () => {
@@ -226,6 +204,7 @@ const Projects = () => {
       setProgressModal({ open: false, project: null });
       setProgressImages([]);
       setProgressPdfs([]);
+      if (fetchProjects) await fetchProjects();
     } catch (err) {
       console.error(err);
       toast.error("❌ Failed to update progress!");
@@ -241,9 +220,42 @@ const Projects = () => {
     try {
       await assignWorkerToProject(projectId, workerId);
       toast.success(`✅ ${workerName} assigned to project!`);
+      if (fetchProjects) await fetchProjects();
+      if (fetchWorkers) await fetchWorkers();
     } catch (err) {
       console.error(err);
       toast.error("❌ Failed to assign worker. Try again!");
+    }
+  };
+
+  // --- Change Project Status (new) ---
+  const handleChangeStatus = async (projectId, targetStatus) => {
+    if (!projectId || !targetStatus) {
+      toast.error("Please pick a status");
+      return;
+    }
+    try {
+      setLoading(true);
+      if (typeof changeProjectStatus === "function") {
+        await changeProjectStatus(projectId, targetStatus);
+      } else if (typeof updateProjectStatus === "function") {
+        // fallback: call the old endpoint (may toggle server-side)
+        // pass projectId and status if backend accepts it; safe either way
+        await updateProjectStatus(projectId, targetStatus);
+      } else {
+        throw new Error("No project status API available in context");
+      }
+
+      // refresh lists
+      if (fetchProjects) await fetchProjects();
+      if (fetchWorkers) await fetchWorkers();
+
+      toast.success(`✅ Project status updated to "${targetStatus}"`);
+    } catch (err) {
+      console.error("Status update error:", err);
+      toast.error("❌ Failed to update project status");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -295,8 +307,9 @@ const Projects = () => {
                 className="relative z-0 bg-white border rounded-2xl shadow-xl hover:shadow-2xl p-6 flex flex-col overflow-hidden"
               >
                 <div className="w-full text-end">
-                <span className={`text-end px-2 py-0.5 rounded-lg text-white -mt-4 w-fit ${item.projectStatus === "active" ? "bg-green-700":"bg-red-700"}`}>{item.projectStatus}</span>
+                  <span className={`text-end px-2 py-0.5 rounded-lg text-sm text-white -mt-16 w-fit ${item.projectStatus === "active" ? "bg-green-700":"bg-red-500"}`}>{item.projectStatus}</span>
                 </div>
+
                 <div className="absolute bg-gradient-to-br from-purple-100/40 via-blue-100/30 to-pink-100/30 opacity-60 rounded-3xl pointer-events-none"></div>
                 <div className="relative z-10 flex flex-col h-full">
                   <div className="flex justify-between items-center -mt-4">
@@ -307,13 +320,13 @@ const Projects = () => {
                       </div>
                       <div className="flex gap-1 rounded-lg p-0.5 mt-3">
                         <span>tasks</span>
-                      <motion.img
+                        <motion.img
                           className="w-6 cursor-pointer"
                           src="https://img.icons8.com/fluency/48/tasklist--v1.png"
                           alt="tasklist"
                           onClick={() => { setSelectedProject(item); setShowTaskModal(true); }}
                         />
-                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -326,7 +339,6 @@ const Projects = () => {
                     </div>
                     <span className="text-sm font-medium">{calculateProjectProgress(item)}%</span>
                   </div>
-
 
                   <div className="mb-4">
                     <p className="font-semibold text-gray-700 mb-2">Supervisor:</p>
@@ -350,10 +362,8 @@ const Projects = () => {
                       ) : (
                         <p className="text-sm text-gray-400">No workers assigned</p>
                       )}
-
                     </div>
                   </div>
-
 
                   <div className="mb-4 w-44">
                     <p className="font-semibold text-gray-700 mb-2">Files:</p>
@@ -388,8 +398,11 @@ const Projects = () => {
                       <option value="">Assign a worker</option>
                       {totalWorkers.map((worker) => <option key={worker._id} value={worker._id}>{worker.Name}</option>)}
                     </select>
+
                     <motion.button whileHover={{ scale: 1.05 }} className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-indigo-500 hover:to-blue-600 text-white px-4 py-2 rounded-xl font-medium shadow-md" onClick={() => handleAssignWorker(item._id, selectedWorkers[item._id])}>Assign</motion.button>
+
                     <motion.button whileHover={{ scale: 1.05 }} onClick={() => openProgressModal(item)} className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-500 text-white px-4 py-2 rounded-xl font-medium shadow-md">Update</motion.button>
+
                   </div>
                 </div>
               </motion.div>
@@ -422,42 +435,45 @@ const Projects = () => {
       </div>
 
       {/* ON HOLD PROJECTS */}
-{/* ON HOLD PROJECTS */}
-<section className="mt-10">
-  <h2 className="text-xl font-bold text-gray-700 mb-2">On Hold Projects</h2>
-  {onHoldProjects.length ? (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {onHoldProjects.map((project) => (
-        <motion.div
-          key={project._id}
-          whileHover={{ scale: 1.03 }}
-          className="relative z-0 bg-white border rounded-2xl shadow-xl p-6 flex flex-col overflow-hidden"
-        >
-          <div className="absolute bg-gradient-to-br from-yellow-50 via-yellow-100 to-yellow-50 opacity-60 rounded-3xl pointer-events-none"></div>
-          <div className="relative z-10 flex flex-col h-full">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-semibold text-lg text-yellow-800">{project.projectName}</h3>
-              <span className="px-3 py-1 text-xs font-bold rounded-full bg-gray-200 text-gray-600 shadow-inner">
-                {project.projectStatus}
-              </span>
-            </div>
-            <p className="text-sm text-gray-700 line-clamp-2">{project.projectDescription}</p>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => handleEditProject(project)}
-                className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 transition"
+      <section className="mt-10">
+        <h2 className="text-xl font-bold text-gray-700 mb-2">On Hold Projects</h2>
+        {onHoldProjects.length ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {onHoldProjects.map((project) => (
+              <motion.div
+                key={project._id}
+                whileHover={{ scale: 1.03 }}
+                className="relative z-0 bg-white border rounded-2xl shadow-xl p-6 flex flex-col overflow-hidden"
               >
-                Resume / Edit
-              </button>
-            </div>
+                <div className="absolute bg-gradient-to-br from-yellow-50 via-yellow-100 to-yellow-50 opacity-60 rounded-3xl pointer-events-none"></div>
+                <div className="relative z-10 flex flex-col h-full">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-semibold text-lg text-yellow-800">{project.projectName}</h3>
+                    <span className="px-3 py-1 text-xs font-bold rounded-full bg-gray-200 text-gray-600 shadow-inner">
+                      {project.projectStatus}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-700 line-clamp-2">{project.projectDescription}</p>
+                  <div className="flex gap-2 mt-4">
+                    <button
+                      onClick={() => {
+                        // resume: set to active
+                        handleChangeStatus(project._id, "active");
+                        if (fetchProjects) fetchProjects();
+                      }}
+                      className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600 transition"
+                    >
+                      Resume / Edit
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
           </div>
-        </motion.div>
-      ))}
-    </div>
-  ) : (
-    <p className="text-gray-500 italic mt-4">No projects on hold.</p>
-  )}
-</section>
+        ) : (
+          <p className="text-gray-500 italic mt-4">No projects on hold.</p>
+        )}
+      </section>
 
       {/* STATS */}
       <div className="flex gap-4 mt-6">
@@ -472,14 +488,12 @@ const Projects = () => {
           onClose={() => setShowModal(false)}
           formData={formData}
           handleChange={handleChange}
-          handleImageUpload={(files) => setImagesFiles(files)} // <- pass the setter
-          handlePDFUpload={(files) => setPdfFiles(files)}     // <- pass the setter
+          handleImageUpload={(files) => setImagesFiles(files)}
+          handlePDFUpload={(files) => setPdfFiles(files)}
           handleSubmit={handleCreateProject}
           loading={loading}
           totalSupervisors={totalSupervisors}
         />
-
-
       )}
 
       {showTaskModal && (

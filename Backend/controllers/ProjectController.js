@@ -170,7 +170,12 @@ export const updateProgress = async (req, res) => {
     // Update progress
     if (progress !== undefined) {
       const numeric = Number(progress);
+
       if (!Number.isNaN(numeric)) project.progress = Math.min(100, Math.max(0, numeric));
+
+      if(numeric === 100){
+        project.projectStatus = "completed";
+      }
     }
 
     await project.save();
@@ -263,6 +268,7 @@ export const addMilestone = async (req, res) => {
 export const updateTaskStatus = async (req, res) => {
   try {
     const { projectId, taskId, completed } = req.body;
+
     const project = await ProjectModel.findById(projectId);
     if (!project) return res.status(404).json({ message: "Project not found" });
 
@@ -270,21 +276,20 @@ export const updateTaskStatus = async (req, res) => {
     if (!task) return res.status(404).json({ message: "Task not found" });
 
     task.completed = completed;
-
-    // Update all milestones when task checkbox clicked
-    if (completed) task.milestones.forEach((m) => (m.completed = true));
-    else task.milestones.forEach((m) => (m.completed = false));
+    task.completedAt = completed ? new Date() : null; // ✅ store date if completed
 
     await project.save();
     res.json({ updatedProject: project });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Error updating task:", err);
+    res.status(500).json({ message: "Failed to update task" });
   }
 };
 
+
 export const updateMilestoneStatus = async (req, res) => {
   try {
-    const { projectId, taskId, milestoneId, completed } = req.body;
+    const { projectId, taskId, milestoneId, completed, completedAt } = req.body;
     const project = await ProjectModel.findById(projectId);
     if (!project) return res.status(404).json({ message: "Project not found" });
 
@@ -295,6 +300,8 @@ export const updateMilestoneStatus = async (req, res) => {
     if (!milestone) return res.status(404).json({ message: "Milestone not found" });
 
     milestone.completed = completed;
+
+    milestone.completedAt = completed ? (completedAt ? new Date(completedAt) : new Date()) : null;
 
     // Automatically mark task complete if all milestones done
     task.completed = task.milestones.every((m) => m.completed);

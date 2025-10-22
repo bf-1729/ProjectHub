@@ -96,19 +96,25 @@ const TaskModal = ({
   };
 
   // Toggle milestone completion
-  const handleToggleMilestone = async (taskId, milestoneId, currentStatus) => {
-    const res = await updateMilestoneStatus(
-      projectId,
-      taskId,
-      milestoneId,
-      !currentStatus
-    );
+const handleToggleMilestone = async (taskId, milestoneId, currentStatus) => {
+  try {
+    // Call UserContext function; it handles completedAt internally
+    const res = await updateMilestoneStatus(projectId, taskId, milestoneId, !currentStatus);
+
     if (res?.project) {
+      // Update local tasks state
       const updatedTask = res.project.tasks.find((t) => t._id === taskId);
       setTasks((prev) => prev.map((t) => (t._id === taskId ? updatedTask : t)));
+
+      // Update progress
       calculateProgress(res.project.tasks);
     }
-  };
+  } catch (err) {
+    console.error("Error toggling milestone:", err);
+  }
+};
+
+
 
   // Toggle milestone visibility
   const toggleMilestoneVisibility = (taskId) => {
@@ -149,7 +155,7 @@ const TaskModal = ({
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
               <p className="text-2xl font-bold mb-2 md:mb-0">
-                Tasks for: {projectName}
+                Milestones for: {projectName}
               </p>
             </div>
 
@@ -158,7 +164,7 @@ const TaskModal = ({
               <div className="flex flex-col md:flex-row gap-4 mb-6">
                 <input
                   type="text"
-                  placeholder="New Task Title"
+                  placeholder="New Milestone Title"
                   className="border rounded-xl p-2 flex-1"
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
@@ -168,7 +174,7 @@ const TaskModal = ({
                   className="bg-blue-500 text-white px-4 py-2 rounded-xl"
                   onClick={handleAddTask}
                 >
-                  + Task
+                  + Milestone
                 </motion.button>
               </div>
             )}
@@ -215,72 +221,81 @@ const TaskModal = ({
                         onClick={() => toggleMilestoneVisibility(task._id)}
                         className="text-sm text-blue-600 font-medium mt-2"
                       >
-                        {openMilestones[task._id] ? "Hide Milestones ▲" : "Show Milestones ▼"}
+                        {openMilestones[task._id] ? "Hide Tasks ▲" : "Show Tasks ▼"}
                       </motion.button>
                     </div>
                   </div>
 
                   {/* Milestones */}
-                  <AnimatePresence>
-                    {openMilestones[task._id] && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="overflow-hidden mt-3"
-                      >
-                        {task.milestones?.length === 0 && (
-                          <p className="text-gray-400">No milestones yet</p>
-                        )}
+<AnimatePresence>
+  {openMilestones[task._id] && (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      className="overflow-hidden mt-3 space-y-2"
+    >
+      {task.milestones?.length === 0 && (
+        <p className="text-gray-400">No Tasks yet</p>
+      )}
 
-                        {task.milestones?.map((ms) => (
-                          <div
-                            key={ms._id}
-                            className="flex items-center justify-between bg-white p-2 rounded-lg shadow-sm mb-2 hover:bg-gray-50"
-                          >
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="checkbox"
-                                checked={ms.completed}
-                                onChange={() =>
-                                  handleToggleMilestone(task._id, ms._id, ms.completed)
-                                }
-                                className="w-4 h-4"
-                              />
-                              <span className={ms.completed ? "text-gray-400 line-through" : ""}>
-                                {ms.title}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
+      {task.milestones?.map((ms) => (
+        <div
+          key={ms._id}
+          className="flex items-center justify-between bg-white p-3 w-full rounded-lg shadow-sm hover:bg-gray-50 transition"
+        >
+          <div className="flex items-center gap-3">
+            {/* Checkbox */}
+            <input
+              type="checkbox"
+              checked={ms.completed}
+              onChange={() => handleToggleMilestone(task._id, ms._id, ms.completed)}
+              className="w-5 h-5 accent-green-500"
+            />
 
-                        {/* Add Milestone */}
-                        {role !== "worker" && (
-                          <div className="flex flex-col md:flex-row gap-2 mt-3">
-                            <input
-                              type="text"
-                              placeholder="New Milestone"
-                              className="border rounded-xl p-2 flex-1"
-                              value={newMilestoneTitle[task._id] || ""}
-                              onChange={(e) =>
-                                setNewMilestoneTitle((prev) => ({
-                                  ...prev,
-                                  [task._id]: e.target.value,
-                                }))
-                              }
-                            />
-                            <motion.button
-                              whileHover={{ scale: 1.05 }}
-                              className="bg-green-500 text-white px-4 py-2 rounded-xl"
-                              onClick={() => handleAddMilestone(task._id)}
-                            >
-                              + Milestone
-                            </motion.button>
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+            {/* Title + Completion */}
+            <div className="flex justify-between gap-80 w-full">
+              <span className={ms.completed ? "font-medium" : "font-medium"}>
+                {ms.title}
+              </span>
+              {ms.completedAt && (
+                <p className="text-xs text-green-600 mt-1">
+                  {new Date(ms.completedAt).toLocaleString()}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Add New Milestone */}
+      {role !== "worker" && (
+        <div className="flex flex-col md:flex-row gap-2 mt-3">
+          <input
+            type="text"
+            placeholder="New Task"
+            className="border rounded-xl p-2 flex-1"
+            value={newMilestoneTitle[task._id] || ""}
+            onChange={(e) =>
+              setNewMilestoneTitle((prev) => ({
+                ...prev,
+                [task._id]: e.target.value,
+              }))
+            }
+          />
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            className="bg-green-500 text-white px-4 py-2 rounded-xl"
+            onClick={() => handleAddMilestone(task._id)}
+          >
+            + Task
+          </motion.button>
+        </div>
+      )}
+    </motion.div>
+  )}
+</AnimatePresence>
+
                 </div>
               ))}
             </div>

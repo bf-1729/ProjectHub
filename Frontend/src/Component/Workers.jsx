@@ -249,6 +249,7 @@ export default function Workers() {
 }
 
 /* Section Component */
+/* Section Component */
 function Section({ title, workers, projects, type, topPerformer }) {
   return (
     <div className="mt-10">
@@ -257,15 +258,16 @@ function Section({ title, workers, projects, type, topPerformer }) {
         {workers
           .filter((w) => w.workerType === type)
           .map((worker, i) => {
+            // Determine assigned projects based on workerId
             const assignedProjects = projects.filter((proj) =>
               type === "Supervisor"
                 ? Array.isArray(proj.supervisors) &&
-                proj.supervisors.some(
-                  (sup) => sup?.trim().toLowerCase() === worker.Name.trim().toLowerCase()
-                )
+                  proj.supervisors.some(
+                    (sup) => sup?.trim().toLowerCase() === worker.Name.trim().toLowerCase()
+                  )
                 : proj.assignedWorkers?.some(
-                  (aw) => aw.Name?.toLowerCase() === worker.Name.trim().toLowerCase()
-                )
+                    (aw) => aw.workerId.toString() === worker._id.toString()
+                  )
             );
 
             const isBusy = assignedProjects.length > 0;
@@ -303,14 +305,14 @@ function Section({ title, workers, projects, type, topPerformer }) {
                   <div className="mt-3">
                     <span>On Projects:</span>
                     <div className="grid grid-cols-3 gap-2 gap-y-2 mt-2">
-                    {assignedProjects.map((proj, idx) => (
-                      <span
-                        key={idx}
-                        className="bg-indigo-50 p-2 rounded-xl text-gray-800 text-sm font-medium shadow-inner overflow-x-hidden"
-                      >
-                        {proj.projectName}
-                      </span>
-                    ))}
+                      {assignedProjects.map((proj, idx) => (
+                        <span
+                          key={idx}
+                          className="bg-indigo-50 p-2 rounded-xl text-gray-800 text-sm font-medium shadow-inner overflow-x-hidden"
+                        >
+                          {proj.projectName}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -321,3 +323,4 @@ function Section({ title, workers, projects, type, topPerformer }) {
     </div>
   );
 }
+

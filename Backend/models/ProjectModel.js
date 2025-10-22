@@ -4,14 +4,17 @@ import mongoose from "mongoose";
 const MilestoneSchema = new mongoose.Schema({
   title: { type: String, required: true },
   completed: { type: Boolean, default: false },
+  completedAt: { type: Date, default: null }
 });
 
 // Task Schema
 const TaskSchema = new mongoose.Schema({
   title: { type: String, required: true },
   completed: { type: Boolean, default: false },
+  completedAt: { type: Date }, // ✅ Add this line
   milestones: [MilestoneSchema],
 });
+
 
 // Project Schema
 const ProjectSchema = new mongoose.Schema(
